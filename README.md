@@ -1,0 +1,1 @@
+All contract files are solidity files that can be deployed and tested in remix
