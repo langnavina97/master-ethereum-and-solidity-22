@@ -65,6 +65,7 @@ contract Cryptos is ERC20Interface {
 
     function transfer(address _to, uint256 _tokens)
         public
+        virtual
         override
         returns (bool success)
     {
@@ -105,7 +106,7 @@ contract Cryptos is ERC20Interface {
         address _from,
         address _to,
         uint256 _tokens
-    ) public override returns (bool success) {
+    ) public virtual override returns (bool success) {
         require(allowed[_from][_to] >= _tokens);
         require(balances[_from] >= _tokens);
 
@@ -113,6 +114,115 @@ contract Cryptos is ERC20Interface {
         balances[_to] += _tokens;
         allowed[_from][_to] -= _tokens;
 
+        return true;
+    }
+}
+
+contract CryptoICO is Cryptos {
+    address public admin;
+    address payable public deposit;
+    uint256 tokenPrice = 0.001 ether; // 1ETH = 1000 CRPT, 1CRPT = 0.001ETH
+    uint256 public hardCap = 300 ether;
+    uint256 public raisedAmount;
+    uint256 public saleStart = block.timestamp;
+    uint256 public saleEnd = block.timestamp + 604800; // ico ends in one week
+    uint256 public tokenTradeStart = saleEnd + 604800; // transferable in a week after sale
+    uint256 public maxInvestment = 5 ether;
+    uint256 public minInvestment = 0.1 ether;
+
+    enum State {
+        beforeStart,
+        running,
+        afterEnd,
+        halted
+    }
+    State public icoState;
+
+    constructor(address payable _deposit) {
+        deposit = _deposit;
+        admin = msg.sender;
+        icoState = State.beforeStart;
+    }
+
+    modifier onlyAdmin() {
+        require(msg.sender == admin);
+        _;
+    }
+
+    function halt() public onlyAdmin {
+        icoState = State.halted;
+    }
+
+    function resume() public onlyAdmin {
+        icoState = State.running;
+    }
+
+    function changeDepositAddress(address payable newDeposit) public onlyAdmin {
+        deposit = newDeposit;
+    }
+
+    function getCurrentState() public view returns (State) {
+        if (icoState == State.halted) {
+            return State.halted;
+        } else if (block.timestamp < saleStart) {
+            return State.beforeStart;
+        } else if (block.timestamp >= saleStart && block.timestamp <= saleEnd) {
+            return State.running;
+        } else {
+            return State.afterEnd;
+        }
+    }
+
+    event Invest(address investor, uint256 value, uint256 tokens);
+
+    function invest() public payable returns (bool) {
+        icoState = getCurrentState();
+        require(icoState == State.running);
+
+        require(msg.value >= minInvestment && msg.value <= maxInvestment);
+        raisedAmount += msg.value;
+        require(raisedAmount <= hardCap);
+
+        uint256 tokens = msg.value / tokenPrice;
+
+        balances[msg.sender] += tokens;
+        balances[founder] -= tokens;
+        deposit.transfer(msg.value);
+
+        emit Invest(msg.sender, msg.value, tokens);
+
+        return true;
+    }
+
+    receive() external payable {
+        invest();
+    }
+
+    function transfer(address _to, uint256 _tokens)
+        public
+        virtual
+        override
+        returns (bool success)
+    {
+        require(block.timestamp > tokenTradeStart);
+        Cryptos.transfer(_to, _tokens); // same as super.transfer(_to, _tokens);
+        return true;
+    }
+
+    function transferFrom(
+        address _from,
+        address _to,
+        uint256 _tokens
+    ) public override returns (bool success) {
+        require(block.timestamp > tokenTradeStart);
+        Cryptos.transferFrom(_from, _to, _tokens);
+        return true;
+    }
+
+    function burn() public returns (bool) {
+        icoState = getCurrentState();
+        require(icoState == State.afterEnd);
+        balances[founder] = 0;
         return true;
     }
 }
